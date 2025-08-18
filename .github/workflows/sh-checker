@@ -1,0 +1,18 @@
+name: Shell Quality (Full)
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SH Checker (ShellCheck + shfmt + checkbashisms)
+        uses: luizm/action-sh-checker@master
+        with:
+          sh_checker_comment: true
+          sh_checker_exclude: ".git .terraform node_modules vendor"
+          sh_checker_shfmt_enable: true
+          sh_checker_shellcheck_enable: true
+          sh_checker_checkbashisms_enable: true
+        env:
+          SHELLCHECK_OPTS: "-x"   # 让 ShellCheck 解析 source/include
+          SHFMT_OPTS: "-s -ci"    # 只检查不写回（默认 diff）
