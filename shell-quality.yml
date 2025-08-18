@@ -1,0 +1,28 @@
+name: Shell Quality (Full)
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  full-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 一站式：ShellCheck + shfmt + checkbashisms
+      - name: SH Checker
+        uses: luizm/action-sh-checker@master
+        with:
+          sh_checker_comment: true
+          sh_checker_exclude: ".git .terraform vendor node_modules"
+          sh_checker_shfmt_enable: true
+          sh_checker_shellcheck_enable: true
+          sh_checker_checkbashisms_enable: true
+        env:
+          SHELLCHECK_OPTS: "-x -e SC2155 -e SC2086"  # 按需调整忽略规则
+          SHFMT_OPTS: "-s -ci"                        # 只检查不写回
