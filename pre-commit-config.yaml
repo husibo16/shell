@@ -1,0 +1,16 @@
+repos:
+  # ShellCheck：静态分析（与 CI 保持一致，可按需调整忽略项）
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ["-x", "-e", "SC2155", "-e", "SC2086"]
+        files: ^.+\.sh$
+
+  # shfmt：格式检查（不写回），想自动修复看下面的“自动修复方案”
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.7.0-4
+    hooks:
+      - id: shfmt
+        args: ["-s", "-ci"]         # 只检查（diff），不写回
+        files: ^.+\.sh$
