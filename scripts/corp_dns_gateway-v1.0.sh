@@ -1,5 +1,5 @@
 #!/bin/sh
-# corp_dns_gateway_posix.sh (v1.1, 2025-08-18)
+# corp_dns_gateway_posix.sh (v1.1.1, 2025-08-18)
 # 企业 DNS 网关一键部署（POSIX /bin/sh）
 # 组件：Unbound(127.0.0.1:5335) + Pi-hole(:53) + Lighttpd(:80)
 # 策略：仅国内上游；国外域名不做特殊处理（默认失败，合规）；黑/白名单 + 定时同步
@@ -136,7 +136,10 @@ EOF
   fi
   if ss -lntup 2>/dev/null | grep -q ':53 '; then
     warn ":53 仍被占用，尝试停用 systemd-resolved（若存在）"
-    is_systemd && { systemctl stop systemd-resolved || true; systemctl disable systemd-resolved || true; }
+    if is_systemd; then
+      systemctl stop systemd-resolved || true
+      systemctl disable systemd-resolved || true
+    fi
   fi
 }
 
@@ -215,7 +218,10 @@ h1{margin:0 0 12px;font-size:28px;color:#c62828}p{margin:8px 0;line-height:1.8}c
 </head><body><div class="wrap"><h1>⚠️ 访问被阻止</h1><p>该网站域名已被公司 DNS 策略屏蔽。</p><p>若确因工作需要访问，请联系 IT 管理员申请白名单。</p><p style="opacity:.7">This access is blocked by corporate DNS policy. Please contact IT for allowlist if it is for work.</p></div></body></html>
 HTML
   fi
-  command -v lighty-enable-mod >/dev/null 2>&1 && lighty-enable-mod 15-blockpage >/dev/null 2>&1 || true
+  # 修复 SC2015：使用 if-then，而不是 A && B || C
+  if command -v lighty-enable-mod >/dev/null 2>&1; then
+    lighty-enable-mod 15-blockpage >/dev/null 2>&1 || true
+  fi
   if is_systemd; then
     svc_enable_now lighttpd || { warn "systemctl 操作失败，回退为非 systemd 启动方式"; start_lighttpd_nonsd; }
   else
@@ -297,7 +303,8 @@ pihole restartdns >/dev/null 2>&1 || true
 SH
   chmod +x "$sync"
 
-  jitter_cmd='$(awk '"'"'BEGIN{srand();print int(rand()*300)}'"'"')'
+  # SC2016 处理：安装期就计算随机抖动（0-299 秒），而非在 cron 时再展开
+  jitter_cmd="$(awk 'BEGIN{srand();print int(rand()*300)}')"
   cron=/etc/cron.d/pihole_custom_sync
   {
     echo "SHELL=/bin/sh"
@@ -325,7 +332,10 @@ EOF
 
 post_checks(){
   info "运行健康检查..."
-  is_systemd && systemctl is-active --quiet unbound || warn "systemd 显示 Unbound 未运行（可能已回退为非 systemd 启动）"
+  # 修复 SC2015：只在 systemd 环境下检查活跃状态
+  if is_systemd; then
+    systemctl is-active --quiet unbound || warn "systemd 显示 Unbound 未运行（可能已回退为非 systemd 启动）"
+  fi
   ss -lntu | grep -q ':53 ' || die "端口 53 未监听，Pi-hole 可能未成功绑定（journalctl -u pihole-FTL）"
   ss -lntu | grep -q ':80 ' || die "端口 80 未监听，Lighttpd 可能未成功启动"
   has dig && { info "dig @127.0.0.1 taobao.com 测试..."; dig @127.0.0.1 taobao.com +time=2 +tries=1 >/dev/null 2>&1 || warn "dig 测试失败，稍后再试或检查网络"; }
