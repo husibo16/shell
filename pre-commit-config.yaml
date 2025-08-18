@@ -12,5 +12,5 @@ repos:
     rev: v3.7.0-4
     hooks:
       - id: shfmt
-        args: ["-s", "-ci"]         # 只检查（diff），不写回
+        args: ["-w", "-s", "-ci"]         # 只检查（diff），不写回
         files: ^.+\.sh$
