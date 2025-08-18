@@ -2,7 +2,11 @@ name: Shell Diff (PR Only)
 
 on:
   pull_request:
-    branches: [ "**" ]
+    branches: [ '**' ]
+    paths:
+      - '**/*.sh'
+      - '.github/workflows/shell-pr-diff.yml'
+  workflow_dispatch: {}
 
 jobs:
   diff-lint:
@@ -23,4 +27,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: .
           shellcheck_flags: "-x"
-          severity: warning
+          severity: warning         # 观察期；稳定后可改成 error
