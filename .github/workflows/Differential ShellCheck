@@ -1,0 +1,19 @@
+name: Shell Diff (PR Only)
+on:
+  pull_request:
+    branches: ["**"]
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }  # 需要完整历史做差分
+      - name: Differential ShellCheck
+        uses: redhat-plumbers-in-action/differential-shellcheck@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: .
+          shellcheck_flags: "-x"
