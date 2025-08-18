@@ -3,19 +3,28 @@ name: Shell Quality (Full)
 on:
   push:
     branches: [ main, master, develop ]
+    paths:
+      - '**/*.sh'                 # 只有 .sh 变更时才跑
+      - '.github/workflows/shell-quality.yml'
   pull_request:
-    branches: [ "**" ]
+    branches: [ '**' ]
+    paths:
+      - '**/*.sh'
+      - '.github/workflows/shell-quality.yml'
+  workflow_dispatch: {}           # 支持手动“Run workflow”
+
+concurrency:
+  group: shell-quality-${{ github.ref }}
+  cancel-in-progress: true        # 同分支重复触发时自动取消旧任务
 
 jobs:
   full-lint:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 一站式：ShellCheck + shfmt + checkbashisms
-      - name: SH Checker
+      - name: SH Checker (ShellCheck + shfmt + bashisms)
         uses: luizm/action-sh-checker@master
         with:
           sh_checker_comment: true
@@ -24,5 +33,5 @@ jobs:
           sh_checker_shellcheck_enable: true
           sh_checker_checkbashisms_enable: true
         env:
-          SHELLCHECK_OPTS: "-x -e SC2155 -e SC2086"  # 按需调整忽略规则
-          SHFMT_OPTS: "-s -ci"                        # 只检查不写回
+          SHELLCHECK_OPTS: "-x -e SC2155 -e SC2086"  # 按需调整忽略
+          SHFMT_OPTS: "-s -ci"                       # 只检查不写回
