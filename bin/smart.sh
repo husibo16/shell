@@ -76,7 +76,13 @@ log_info()    { log__ INFO    "${_c_info}[INFO]${_c_reset}  $*"; }
 log_warn()    { log__ WARN    "${_c_warn}[WARN]${_c_reset}  $*"; }
 log_error()   { log__ ERROR   "${_c_err}[ERROR]${_c_reset} $*"; }
 log_success() { log__ OK      "${_c_ok}[ OK ]${_c_reset}  $*"; }
-log_debug()   { [[ "$DEBUG" == true ]] || return 0; log__ DEBUG "${_c_dbg}[DEBUG] $*${_c_reset}"; }
+log_debug() {
+  if [[ "$DEBUG" == true ]]; then
+    log__ DEBUG "${_c_dbg}[DEBUG] $*${_c_reset}"
+  else
+    return 0
+  fi
+}
 die() { log_error "$*"; exit 1; }
 
 # ---------------------- 输出重定向（可选） -------------------
