@@ -275,7 +275,10 @@ parse_args() {
         *) break ;;
       esac
     done
-    SUBCOMMAND="${1:-}"; [[ $# -gt 0 ]] && shift || true
+    SUBCOMMAND="${1:-}"
+    if [[ $# -gt 0 ]]; then
+      shift
+    fi
     ARGS_REST=("$@")
   else
     # 回退：仅短选项；解析完成后第一个剩余参数为子命令
@@ -293,7 +296,10 @@ parse_args() {
       esac
     done
     shift $((OPTIND - 1))
-    SUBCOMMAND="${1:-}"; [[ $# -gt 0 ]] && shift || true
+    SUBCOMMAND="${1:-}"
+    if [[ $# -gt 0 ]]; then
+      shift
+    fi
     ARGS_REST=("$@")
   fi
 }
