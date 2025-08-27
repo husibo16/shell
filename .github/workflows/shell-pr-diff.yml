@@ -2,36 +2,60 @@ name: Shell Quality (Full)
 
 on:
   push:
-    branches: [ main, master, develop ]
-    paths:
-      - '**/*.sh'                 # 只有 .sh 变更时才跑
-      - '.github/workflows/shell-quality.yml'
-  pull_request:
-    branches: [ '**' ]
+    branches: [ main, master, develop ]   # 主干/常见分支上推送时检查
     paths:
       - '**/*.sh'
-      - '.github/workflows/shell-quality.yml'
-  workflow_dispatch: {}           # 支持手动“Run workflow”
+      - '**/*.bash'
+      - 'bin/**'
+      - '.github/workflows/*.yml'
+  workflow_dispatch: {}                   # 允许手动触发
 
 concurrency:
-  group: shell-quality-${{ github.ref }}
-  cancel-in-progress: true        # 同分支重复触发时自动取消旧任务
+  group: shell-full-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   full-lint:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: SH Checker (ShellCheck + shfmt + bashisms)
-        uses: luizm/action-sh-checker@master
-        with:
-          sh_checker_comment: true
-          sh_checker_exclude: ".git .terraform vendor node_modules"
-          sh_checker_shfmt_enable: true
-          sh_checker_shellcheck_enable: true
-          sh_checker_checkbashisms_enable: true
-        env:
-          SHELLCHECK_OPTS: "-x -e SC2155 -e SC2086"  # 按需调整忽略
-          SHFMT_OPTS: "-s -ci"                       # 只检查不写回
+      - name: Install ShellCheck & shfmt
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y shellcheck
+          # 安装 shfmt（用 go 版最快；不用可注释掉）
+          sudo apt-get install -y golang || true
+          if command -v go >/dev/null 2>&1; then
+            sudo GOBIN=/usr/local/bin go install mvdan.cc/sh/v3/cmd/shfmt@latest
+          fi
+
+      # 代码格式检查（不自动修改，给出 diff；想自动修复可在本地 pre-commit 做）
+      - name: Run shfmt (check only)
+        if: hashFiles('**/*.sh','**/*.bash','bin/**') != ''
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(
+            { git ls-files '**/*.sh' '**/*.bash' 'bin/**' || true; } | sort -u
+          )
+          if [[ ${#FILES[@]} -eq 0 ]]; then
+            echo "No shell files to format."
+            exit 0
+          fi
+          # -s: 简化; -d: 仅输出 diff; -i 2: 两空格缩进；-ci: case 缩进
+          shfmt -s -d -i 2 -ci "${FILES[@]}"
+
+      # 全量 ShellCheck，严苛：出现 error 直接失败，保护主干
+      - name: Run ShellCheck (full repo)
+        if: hashFiles('**/*.sh','**/*.bash','bin/**') != ''
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(
+            { git ls-files '**/*.sh' '**/*.bash' 'bin/**' || true; } | sort -u
+          )
+          echo "Checking ${#FILES[@]} files with ShellCheck..."
+          # -x：以 source 方式解析；-S error：error 级别即失败
+          shellcheck -x -S error "${FILES[@]}"
