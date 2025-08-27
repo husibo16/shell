@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ===================================================================
-# 名称: xxxx
+# 名称: xxx
 # 用途: 完整智能版 Bash 标准模板（生产可用，可扩展子命令）
-# 版本: xxxxxx
+# 版本: xxxx
 # 作者: 胡博涵
-# 更新: xxxxxx
+# 更新: xxxx
 # 许可: xxx
 # ===================================================================
 
@@ -15,23 +15,23 @@ shopt -s extglob
 IFS=$'\n\t'
 
 # ---------------------- 常量与默认值 -------------------------
-readonly SCRIPT_NAME="$(basename "$0")"
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly PID="$$"
-readonly DEFAULT_LOG_FILE="/tmp/${SCRIPT_NAME%.sh}.${PID}.log"
-readonly LOCK_FILE="/tmp/${SCRIPT_NAME%.sh}.lock"
-readonly MIN_BASH_MAJOR=4
-readonly MIN_BASH_MINOR=2
+readonly SCRIPT_NAME="$(basename "$0")"          # 当前脚本名
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" # 脚本所在目录的绝对路径
+readonly PID="$$"                                   # 当前进程 ID
+readonly DEFAULT_LOG_FILE="/tmp/${SCRIPT_NAME%.sh}.${PID}.log" # 默认日志文件路径
+readonly LOCK_FILE="/tmp/${SCRIPT_NAME%.sh}.lock"    # 并发锁文件
+readonly MIN_BASH_MAJOR=4                             # 需要的 Bash 主版本
+readonly MIN_BASH_MINOR=2                             # 需要的 Bash 次版本
 
-DEBUG=false
-QUIET=false
-NO_COLOR=false
-TEE_LOG=false
-LOG_FILE="$DEFAULT_LOG_FILE"
-CONFIG_FILE=""
-NAME=""
-SUBCOMMAND=""
-ARGS_REST=()
+DEBUG=false        # 是否开启调试模式
+QUIET=false        # 静默模式，仅输出 WARN/ERROR
+NO_COLOR=false     # 是否关闭彩色输出
+TEE_LOG=false      # 是否将输出同时写入日志
+LOG_FILE="$DEFAULT_LOG_FILE" # 当前使用的日志文件
+CONFIG_FILE=""    # 指定的配置文件路径
+NAME=""           # greet 子命令的名字参数
+SUBCOMMAND=""     # 选择的子命令
+ARGS_REST=()       # 传递给子命令的剩余参数
 
 # ---------------------- 颜色与时间戳 -------------------------
 _ts() { date '+%Y-%m-%d %H:%M:%S'; }
