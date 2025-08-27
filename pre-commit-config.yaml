@@ -9,8 +9,8 @@ repos:
 
   # shfmt：格式检查（不写回），想自动修复看下面的“自动修复方案”
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.7.0-4
+    rev: v3.8.0   # 建议顺便更新到最新版
     hooks:
       - id: shfmt
-        args: ["-w", "-s", "-ci"]         # 只检查（diff），不写回
+        args: ["-w", "-s", "-i", "2", "-ci"]   # -w 自动修复，2 空格缩进，case 缩进
         files: ^.+\.sh$
