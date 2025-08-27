@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ===================================================================
-# 名称: xxxxx
+# 名称: xxxx
 # 用途: 完整智能版 Bash 标准模板（生产可用，可扩展子命令）
-# 版本: xxxx
+# 版本: xxxxxx
 # 作者: 胡博涵
 # 更新: xxxxxx
-# 许可: xxxx
+# 许可: xxx
 # ===================================================================
 
 # ---------------------- 严格模式与兼容性 ----------------------
@@ -42,6 +42,22 @@ if _supports_color; then
 else
   _c_reset=""; _c_info=""; _c_warn=""; _c_err=""; _c_ok=""; _c_dbg=""
 fi
+
+rainbow_text() {
+  local text="$1"
+  if ! _supports_color; then
+    echo "$text"
+    return
+  fi
+  local colors=($'\033[31m' $'\033[33m' $'\033[32m' $'\033[36m' $'\033[34m' $'\033[35m')
+  local reset=$'\033[0m'
+  local out="" c
+  for ((i=0; i<${#text}; i++)); do
+    c=${colors[$((i % ${#colors[@]}))]}
+    out+="${c}${text:i:1}${reset}"
+  done
+  echo -e "$out"
+}
 
 log__() {
   local level="$1"; shift
@@ -145,6 +161,25 @@ TMP_DIR=""
 mk_tmpdir() {
   TMP_DIR="$(mktemp -d -t "${SCRIPT_NAME%.sh}.XXXXXX")"
   log_debug "TMP_DIR=$TMP_DIR"
+}
+
+# ---------------------- 网络信息（本机 IP 获取） ------------------
+#
+# get_local_ip: 尝试通过 hostname、ip 或 ifconfig 获取本机 IPv4 地址；
+# 若全部不可用则返回 <unknown>
+get_local_ip() {
+  local ip=""
+  if command -v hostname >/dev/null 2>&1; then
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  fi
+  if [[ -z "$ip" ]]; then
+    if command -v ip >/dev/null 2>&1; then
+      ip=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
+    elif command -v ifconfig >/dev/null 2>&1; then
+      ip=$(ifconfig 2>/dev/null | awk '/inet / {print $2}' | grep -v '127.0.0.1' | head -n1)
+    fi
+  fi
+  echo "${ip:-<unknown>}"
 }
 
 # ---------------------- 重试/超时/确认 ----------------------
@@ -285,18 +320,21 @@ cmd_greet() {
   fi
   log_info "准备问候..."
   log_debug "NAME=$NAME"
-  echo "Hello, $NAME!"
+  rainbow_text "Hello, $NAME!"
 }
 cmd_status() {
   log_info "环境状态："
-  echo "  Script   : $SCRIPT_NAME"
-  echo "  Dir      : $SCRIPT_DIR"
-  echo "  PID      : $PID"
-  echo "  Bash     : $BASH_VERSION"
-  echo "  LogFile  : $LOG_FILE"
-  echo "  Debug    : $DEBUG"
-  echo "  Quiet    : $QUIET"
-  echo "  TmpDir   : ${TMP_DIR:-<未创建>}"
+  local labels=("Script" "Dir" "IP" "PID" "Bash" "LogFile" "Debug" "Quiet" "TmpDir")
+  local values=("$SCRIPT_NAME" "$SCRIPT_DIR" "$(get_local_ip)" "$PID" "$BASH_VERSION" "$LOG_FILE" "$DEBUG" "$QUIET" "${TMP_DIR:-<未创建>}")
+  local colors=($'\033[31m' $'\033[33m' $'\033[32m' $'\033[36m' $'\033[34m' $'\033[35m')
+  for i in "${!labels[@]}"; do
+    if _supports_color; then
+      local idx=$(( i % ${#colors[@]} ))
+      printf "  %b%-8s%b : %s\n" "${colors[$idx]}" "${labels[i]}" "$_c_reset" "${values[i]}"
+    else
+      printf "  %-8s : %s\n" "${labels[i]}" "${values[i]}"
+    fi
+  done
 }
 
 load_plugins() {
