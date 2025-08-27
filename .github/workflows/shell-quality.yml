@@ -2,29 +2,37 @@ name: Shell Diff (PR Only)
 
 on:
   pull_request:
-    branches: [ '**' ]
+    branches: ['*']            # 对所有目的分支的 PR 生效（也可收紧为 ['main']）
     paths:
-      - '**/*.sh'
-      - '.github/workflows/shell-pr-diff.yml'
-  workflow_dispatch: {}
+      - '**/*.sh'              # 任意 .sh
+      - '**/*.bash'            # 任意 .bash
+      - 'bin/**'               # bin 目录下的可执行脚本（很多人没后缀）
+      - '.github/workflows/*.yml'
+  workflow_dispatch: {}         # 允许手动触发
+
+concurrency:
+  group: shell-diff-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true      # 新的运行会取消旧的，避免重复评论
 
 jobs:
   diff-lint:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: write      # 需要在 PR 上写评论/注释
 
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0        # 差异检查必须完整历史
 
       - name: Differential ShellCheck
         uses: redhat-plumbers-in-action/differential-shellcheck@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}  # 默认就有，见下文仓库权限设置
           path: .
-          shellcheck_flags: "-x"
-          severity: warning         # 观察期；稳定后可改成 error
+          shellcheck_flags: "-x"              # 以 source 方式解析
+          severity: warning                   # 观察期；稳定后可改为 error
+          # exclude: "vendor/*,dist/*"        # 如需忽略目录可解注
