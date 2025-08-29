@@ -1,16 +1,18 @@
 repos:
-  # ShellCheck：静态分析（与 CI 保持一致，可按需调整忽略项）
+  # 1) ShellCheck：静态分析
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
         args: ["-x", "-e", "SC2155", "-e", "SC2086"]
-        files: ^.+\.sh$
+        types: [shell]  # 支持 .sh、.bash 和有 shebang 的脚本
+        # 如需排除第三方目录：
+        # exclude: ^(vendor/|third_party/)
 
-  # shfmt：格式检查（不写回），想自动修复看下面的“自动修复方案”
+  # 2) shfmt：自动格式化（会写回）
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.9.0   # 建议顺便更新到最新版
+    rev: v3.9.0
     hooks:
       - id: shfmt
-        args: ["-w", "-s", "-i", "2", "-ci"]   # -w 自动修复，2 空格缩进，case 缩进
-        files: ^.+\.sh$
+        args: ["-w", "-s", "-i", "2", "-ci"]  # -w 写回，-s 简化，-i=2，-ci case 缩进
+        types: [shell]
