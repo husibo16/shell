@@ -104,6 +104,7 @@ CONFIG_FILE=/etc/frp/frpc.toml
 if [[ ! -f "$CONFIG_FILE" ]]; then
   SERVER_ADDR=${FRPC_SERVER_ADDR:-example.com}
   SERVER_PORT=${FRPC_SERVER_PORT:-7000}
+  AUTH_METHOD=${FRPC_AUTH_METHOD:-token}
   AUTH_TOKEN=${FRPC_TOKEN:-changeme}
   TUNNEL_NAME=${FRPC_TUNNEL_NAME:-web}
   LOCAL_PORT=${FRPC_LOCAL_PORT:-80}
@@ -114,9 +115,10 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 # 在运行脚本前设置 FRPC_* 环境变量可以覆盖默认值，或直接编辑此文件。
 serverAddr = "${SERVER_ADDR}"
 serverPort = ${SERVER_PORT}
-auth = {
-  token = "${AUTH_TOKEN}"
-}
+
+auth.method = "${AUTH_METHOD}"
+auth.token = "${AUTH_TOKEN}"
+
 [[proxies]]
 name = "${TUNNEL_NAME}"
 type = "tcp"

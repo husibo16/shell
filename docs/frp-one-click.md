@@ -31,8 +31,17 @@
 4. 如需自定义端口或认证信息，可在运行脚本前通过环境变量覆盖：
 
    ```bash
-   sudo FRPS_BIND_PORT=7001 FRPS_DASHBOARD_PORT=7501 FRPS_TOKEN=strong_token ./install-frps.sh
+   sudo FRPS_BIND_PORT=7001 \
+        FRPS_WEB_PORT=7501 \
+        FRPS_WEB_USER=viewer \
+        FRPS_TOKEN=strong_token \
+        ./install-frps.sh
    ```
+
+   - `FRPS_WEB_ADDR`、`FRPS_WEB_PORT`、`FRPS_WEB_USER`、`FRPS_WEB_PASS` 分别对应 web 仪表盘的监听地址、端口以及登录凭据；出于兼容性考虑，旧的 `FRPS_DASHBOARD_*` 变量仍然有效。
+   - `FRPS_AUTH_METHOD`、`FRPS_TOKEN` 可用于切换认证方式或修改口令，默认为 `token` + `changeme`。
+   - `FRPS_LOG_PATH`、`FRPS_LOG_LEVEL` 可修改日志输出位置与级别。
+   - `FRPS_ENABLE_PROMETHEUS` 控制是否在 web 界面暴露 `/metrics`（默认为 `true`）。
 
 5. 首次安装后，脚本会提醒默认 token `changeme`，请手动编辑 `/etc/frp/frps.toml` 并重启服务：
 
@@ -64,6 +73,7 @@
 
    - `FRPC_SERVER_ADDR`：填写 VPS 的公网域名或 IP。
    - `FRPC_TOKEN`：需与 frps 端配置保持一致。
+   - `FRPC_AUTH_METHOD`：默认 `token`，若使用 OIDC 等高级认证，可在此处切换。
    - `FRPC_LOCAL_PORT`：本地要暴露的服务端口，例如 80 或 22。
    - `FRPC_REMOTE_PORT`：VPS 上对外暴露的端口，需要确保未被占用。
 

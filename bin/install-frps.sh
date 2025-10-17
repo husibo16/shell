@@ -103,26 +103,38 @@ mkdir -p /etc/frp
 CONFIG_FILE=/etc/frp/frps.toml
 if [[ ! -f "$CONFIG_FILE" ]]; then
   BIND_PORT=${FRPS_BIND_PORT:-7000}
-  DASHBOARD_PORT=${FRPS_DASHBOARD_PORT:-7500}
-  DASHBOARD_USER=${FRPS_DASHBOARD_USER:-admin}
-  DASHBOARD_PASS=${FRPS_DASHBOARD_PASS:-changeme}
+  WEB_ADDR=${FRPS_WEB_ADDR:-${FRPS_DASHBOARD_ADDR:-"0.0.0.0"}}
+  WEB_PORT=${FRPS_WEB_PORT:-${FRPS_DASHBOARD_PORT:-7500}}
+  WEB_USER=${FRPS_WEB_USER:-${FRPS_DASHBOARD_USER:-admin}}
+  WEB_PASS=${FRPS_WEB_PASS:-${FRPS_DASHBOARD_PASS:-changeme}}
+  AUTH_METHOD=${FRPS_AUTH_METHOD:-token}
   AUTH_TOKEN=${FRPS_TOKEN:-changeme}
+  LOG_PATH=${FRPS_LOG_PATH:-${FRPS_LOG_TO:-/var/log/frps.log}}
+  LOG_LEVEL=${FRPS_LOG_LEVEL:-info}
+  ENABLE_PROMETHEUS=${FRPS_ENABLE_PROMETHEUS:-true}
+
+  if [[ ! "$ENABLE_PROMETHEUS" =~ ^(true|false)$ ]]; then
+    echo "[警告] FRPS_ENABLE_PROMETHEUS 仅支持 true/false，当前值 '$ENABLE_PROMETHEUS' 已被忽略，默认使用 true。"
+    ENABLE_PROMETHEUS=true
+  fi
 
   cat > "$CONFIG_FILE" <<CONF
 # frps 配置文件
 # 如需调整端口、认证等参数，可在运行脚本前设置 FRPS_* 环境变量，或直接编辑此文件。
 bindPort = ${BIND_PORT}
-dashboardAddr = "0.0.0.0"
-dashboardPort = ${DASHBOARD_PORT}
-dashboardUser = "${DASHBOARD_USER}"
-dashboardPwd = "${DASHBOARD_PASS}"
-auth = {
-  token = "${AUTH_TOKEN}"
-}
-log = {
-  to = "/var/log/frps.log"
-  level = "info"
-}
+
+webServer.addr = "${WEB_ADDR}"
+webServer.port = ${WEB_PORT}
+webServer.user = "${WEB_USER}"
+webServer.password = "${WEB_PASS}"
+
+auth.method = "${AUTH_METHOD}"
+auth.token = "${AUTH_TOKEN}"
+
+enablePrometheus = ${ENABLE_PROMETHEUS}
+
+log.to = "${LOG_PATH}"
+log.level = "${LOG_LEVEL}"
 CONF
   chmod 600 "$CONFIG_FILE"
   echo "[信息] 已生成默认配置文件: $CONFIG_FILE"
