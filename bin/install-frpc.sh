@@ -69,10 +69,14 @@ esac
 
 if [[ -z "$FRP_VERSION" ]]; then
   echo "[信息] 正在获取 frp 最新版本..."
-  FRP_VERSION=$(curl -fsSL "https://api.github.com/repos/fatedier/frp/releases/latest" |
-    grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": "v?([0-9.]+)".*/\1/')
+  RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/fatedier/frp/releases/latest")
+  if [[ -z "$RELEASE_JSON" ]]; then
+    echo "[错误] 无法从 GitHub 获取 frp 最新版本，请检查网络连接或使用 --version 手动指定。" >&2
+    exit 1
+  fi
+  FRP_VERSION=$(grep -m1 '"tag_name"' <<<"$RELEASE_JSON" | sed -E 's/.*"tag_name": "v?([0-9.]+)".*/\1/')
   if [[ -z "$FRP_VERSION" ]]; then
-    echo "[错误] 无法从 GitHub 获取 frp 最新版本，请使用 --version 手动指定。" >&2
+    echo "[错误] 未能解析 frp 最新版本号，请使用 --version 手动指定。" >&2
     exit 1
   fi
 fi
