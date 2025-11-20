@@ -4,11 +4,24 @@
 # 模式: 超级节点（客户端全流量走服务器 + 客户端互通）
 # 适配系统: Debian / Ubuntu
 # 作者: 胡博涵 实践版（2025）
-# 版本: v1.4-intelligent（生产级旗舰版）
+# 版本: v1.5-intelligent（MTU 实测 + 分流 + 智能 DNS）
 # ============================================================
+
+# ---- Bash 强制守护（使用 POSIX 语法确保在 dash/busybox 下也能复用）----
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v /bin/bash >/dev/null 2>&1; then
+    exec /bin/bash "$0" "$@"
+  elif command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  else
+    printf "[错误] 当前 shell (%s) 不支持脚本所需的 bash 语法，请安装 bash 后以 'bash %s' 运行。\n" "${SHELL:-unknown}" "$0" >&2
+    exit 1
+  fi
+fi
 
 set -euo pipefail
 LOG_FILE="/var/log/wireguard_server_install.log"
+export DEBIAN_FRONTEND=noninteractive
 
 WG_IF="wg0"
 WG_NET="10.10.10.0/24"
@@ -17,6 +30,8 @@ WG_DIR="/etc/wireguard"
 WG_CLIENT_DIR="${WG_DIR}/clients"
 WG_PORT_FILE="${WG_DIR}/listen_port"
 WG_MANAGER_CONF="${WG_DIR}/wg-manager.conf"   # 预留给以后集成 Telegram 等配置
+WG_MTU_FILE="${WG_DIR}/mtu"
+WG_DNS_FILE="${WG_DIR}/dns_best"              # 智能 DNS 缓存
 
 # -------------------- 彩色输出 & 日志 --------------------
 info()    { echo -e "\033[1;34m[信息]\033[0m $1"; }
@@ -57,12 +72,14 @@ detect_public_ip() {
   local ip
   # 方法 1：出口路由
   ip=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {print $7; exit}')
-  if [[ -n "$ip" ]] && ! [[ "$ip" =~ ^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
+  # 过滤内网 + CGNAT
+  if [[ -n "$ip" ]] && \
+     ! [[ "$ip" =~ ^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\. ]]; then
     echo "$ip"
     return
   fi
 
-  # 方法 2：外网探测（如果 curl 不存在就算了）
+  # 方法 2：外网探测（如果 curl 存在）
   if command -v curl &>/dev/null; then
     for api in "https://api.ipify.org" "https://ifconfig.me" "https://ipv4.icanhazip.com"; do
       ip=$(curl -4s --max-time 3 "$api" || true)
@@ -86,6 +103,119 @@ detect_wg_port() {
     port=$(cat "$WG_PORT_FILE" 2>/dev/null || true)
   fi
   echo "$port"
+}
+
+# 智能探测 MTU（按服务器出口估算 + ping 探测，客户端可覆盖）
+detect_optimal_mtu() {
+  local existing mtu_candidate wan_if base_mtu wg_overhead=80
+
+  # 如果已有缓存则直接使用，避免每次重复探测
+  if [[ -f "$WG_MTU_FILE" ]]; then
+    existing=$(cat "$WG_MTU_FILE" 2>/dev/null || true)
+  fi
+  if [[ -n "${existing:-}" ]]; then
+    echo "$existing"
+    return
+  fi
+
+  wan_if=$(detect_wan_if)
+  if [[ -z "$wan_if" ]]; then
+    wan_if=$(ip route | awk '/default/ {print $5; exit}')
+  fi
+
+  base_mtu=$(ip -o link show "$wan_if" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="mtu") print $(i+1)}')
+  [[ -z "$base_mtu" ]] && base_mtu=1500
+
+  mtu_candidate=$((base_mtu - wg_overhead))
+  [[ $mtu_candidate -lt 1280 ]] && mtu_candidate=1280
+
+  # 使用 ping + DF 做路径 MTU 探测，失败则返回估算值
+  if command -v ping &>/dev/null; then
+    local test_ips=("1.1.1.1" "8.8.8.8")
+    local ip size
+    for ip in "${test_ips[@]}"; do
+      if ping -4 -c1 -W1 "$ip" >/dev/null 2>&1; then
+        size=$mtu_candidate
+        while [[ $size -ge 1280 ]]; do
+          # ICMP 头部 28 字节
+          if ping -4 -c1 -W1 -M do -s $((size-28)) "$ip" >/dev/null 2>&1; then
+            echo "$size"
+            return
+          fi
+          size=$((size-10))
+        done
+      fi
+    done
+  fi
+
+  echo "$mtu_candidate"
+}
+
+get_or_detect_mtu() {
+  local mtu
+  mtu=$(detect_optimal_mtu)
+  echo "$mtu" > "$WG_MTU_FILE"
+  echo "$mtu"
+}
+
+# 智能 DNS：测试一批常见 DNS，选延迟最低的两台
+detect_best_dns() {
+  local existing
+  if [[ -f "$WG_DNS_FILE" ]]; then
+    existing=$(cat "$WG_DNS_FILE" 2>/dev/null || true)
+  fi
+  if [[ -n "${existing:-}" ]]; then
+    echo "$existing"
+    return
+  fi
+
+  local candidates=(
+    "1.1.1.1"
+    "1.0.0.1"
+    "8.8.8.8"
+    "8.8.4.4"
+    "9.9.9.9"
+    "114.114.114.114"
+    "223.5.5.5"
+    "223.6.6.6"
+  )
+  local results=()
+  local ip rtt line
+
+  if ! command -v ping >/dev/null 2>&1; then
+    echo "1.1.1.1, 8.8.8.8"
+    return
+  fi
+
+  for ip in "${candidates[@]}"; do
+    line=$(ping -c1 -W1 "$ip" 2>/dev/null | awk -F'time=' '/time=/{print $2}' | awk '{print $1}')
+    if [[ -n "$line" ]]; then
+      results+=("$line $ip")
+    fi
+  done
+
+  if ((${#results[@]} == 0)); then
+    echo "1.1.1.1, 8.8.8.8"
+    return
+  fi
+
+  local sorted first second
+  sorted=$(printf '%s\n' "${results[@]}" | sort -n)
+  first=$(awk 'NR==1{print $2}' <<<"$sorted")
+  second=$(awk 'NR==2{print $2}' <<<"$sorted")
+
+  if [[ -n "$second" ]]; then
+    echo "${first}, ${second}"
+  else
+    echo "${first}"
+  fi
+}
+
+get_or_detect_dns() {
+  local dns
+  dns=$(detect_best_dns)
+  echo "$dns" > "$WG_DNS_FILE"
+  echo "$dns"
 }
 
 SERVER_PUBLIC_IP=$(detect_public_ip)
@@ -119,8 +249,9 @@ next_client_ip() {
   mkdir -p "$WG_CLIENT_DIR"
   local used_ips base_prefix="10.10.10"
   used_ips=$(grep -R "^Address" "$WG_CLIENT_DIR" 2>/dev/null | awk '{print $3}' | cut -d/ -f1 || true)
+  local i candidate
   for i in $(seq 2 254); do
-    local candidate="${base_prefix}.${i}"
+    candidate="${base_prefix}.${i}"
     if ! grep -q "$candidate" <<< "$used_ips"; then
       echo "$candidate"
       return 0
@@ -139,7 +270,7 @@ ensure_kernel_modules() {
 
   if ! lsmod | grep -q wireguard; then
     warn "仍未加载 wireguard 模块，将尝试安装 DKMS 版本（旧内核可能需要）..."
-    apt update -y
+    apt update -y || true
     apt install -y wireguard-dkms "linux-headers-$(uname -r)" || true
     modprobe wireguard 2>/dev/null || true
   fi
@@ -163,6 +294,13 @@ EOF
 # -------------------- nftables 配置（动态端口 + 动态网卡） --------------------
 configure_nftables() {
   info "配置 nftables 防火墙..."
+
+  # 备份原有配置，避免覆盖生产环境已有的防火墙规则
+  if [[ -f /etc/nftables.conf ]]; then
+    local backup="/etc/nftables.conf.bak-$(date +%F-%H%M%S)"
+    cp /etc/nftables.conf "$backup"
+    info "已备份现有 nftables 配置到：${backup}"
+  fi
 
   local WAN_IF WG_PORT
   WAN_IF=$(detect_wan_if)
@@ -232,9 +370,34 @@ setup_wg_monitor() {
   info "配置 WireGuard 自动守护..."
   cat > /usr/local/bin/wg-monitor.sh <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
 WG_IF="wg0"
+LOG_FILE="/var/log/wg-monitor.log"
+umask 077
+mkdir -p "$(dirname "$LOG_FILE")"
+
+log() {
+  echo "[$(date '+%F %T')] $1" >> "$LOG_FILE"
+}
+
 if ! wg show "${WG_IF}" >/dev/null 2>&1; then
-  wg-quick up "${WG_IF}" >/dev/null 2>&1 || exit 0
+  log "检测到 ${WG_IF} 未运行，尝试启动..."
+  if output=$(wg-quick up "${WG_IF}" 2>&1); then
+    log "wg-quick up 成功。"
+    log "$output"
+  else
+    log "wg-quick up 失败：${output}"
+    exit 1
+  fi
+else
+  handshake=$(wg show "${WG_IF}" latest-handshakes 2>/dev/null | awk 'NR>1 {print $2}' | sort -nr | head -n1)
+  if [[ -z "${handshake:-}" || "${handshake}" -eq 0 ]]; then
+    log "${WG_IF} 目前没有活跃握手，可能所有客户端均离线。"
+  fi
+fi
+
+if ! systemctl is-active --quiet "wg-quick@${WG_IF}"; then
+  log "警告：systemd 单元 wg-quick@${WG_IF} 未处于 active 状态。"
 fi
 EOF
   chmod +x /usr/local/bin/wg-monitor.sh
@@ -293,9 +456,11 @@ init_server() {
   SERVER_PUB=$(cat "${WG_DIR}/server_public.key")
   success "服务端公钥：${SERVER_PUB}"
 
-  local WG_PORT
+  local WG_PORT WG_MTU
   WG_PORT=$(get_or_create_port)
+  WG_MTU=1280
   success "WireGuard 监听端口：${WG_PORT}/udp"
+  success "服务端 MTU 固定为：${WG_MTU}"
 
   info "写入 ${WG_DIR}/${WG_IF}.conf ..."
   cat > "${WG_DIR}/${WG_IF}.conf" <<EOF
@@ -303,7 +468,7 @@ init_server() {
 Address = ${WG_SERVER_IP}/24
 ListenPort = ${WG_PORT}
 PrivateKey = ${SERVER_PRIV}
-MTU = 1280
+MTU = ${WG_MTU}
 SaveConfig = true
 EOF
 
@@ -363,8 +528,49 @@ add_client() {
     return
   fi
 
-  local CLIENT_IP
+  local CLIENT_IP WG_MTU_RECOMMEND WG_MTU ALLOWED_IPS DNS_SERVERS
   CLIENT_IP=$(next_client_ip) || { error "客户端 IP 已用尽（10.10.10.2-254）。"; return; }
+
+  # 推荐 MTU（根据服务器出口估算）
+  WG_MTU_RECOMMEND=$(get_or_detect_mtu)
+  echo "推荐 MTU（基于服务器出口估算）: ${WG_MTU_RECOMMEND}"
+  echo "如已在客户端实测 MTU，可在此输入实测值；否则按回车使用推荐值。"
+  read -rp "请输入客户端 MTU（1200–1500，默认 ${WG_MTU_RECOMMEND}）: " REPLY_MTU
+
+  if [[ -n "${REPLY_MTU:-}" && "${REPLY_MTU}" =~ ^[0-9]+$ ]] && \
+     [[ "${REPLY_MTU}" -ge 1200 && "${REPLY_MTU}" -le 1500 ]]; then
+    WG_MTU="${REPLY_MTU}"
+  else
+    WG_MTU="${WG_MTU_RECOMMEND}"
+  fi
+
+  # 路由模式选择：全局 / 仅内网 / 自定义
+  echo "选择路由模式:"
+  echo " 1) 全局代理（所有流量走服务器，附带内网互通）"
+  echo " 2) 仅内网（只访问 ${WG_NET}，不代理公网）"
+  echo " 3) 自定义 AllowedIPs"
+  read -rp "请输入选项 [1-3]（默认 1）: " ROUTE_MODE
+
+  case "${ROUTE_MODE:-1}" in
+    2)
+      ALLOWED_IPS="${WG_NET}"
+      ;;
+    3)
+      read -rp "请输入 AllowedIPs（例如 0.0.0.0/0, ${WG_NET}）: " CUSTOM_ALLOWED
+      if [[ -n "${CUSTOM_ALLOWED:-}" ]]; then
+        ALLOWED_IPS="${CUSTOM_ALLOWED}"
+      else
+        ALLOWED_IPS="0.0.0.0/0, ${WG_NET}"
+      fi
+      ;;
+    *)
+      ALLOWED_IPS="0.0.0.0/0, ${WG_NET}"
+      ;;
+  esac
+
+  # 智能 DNS
+  DNS_SERVERS=$(get_or_detect_dns)
+  echo "智能 DNS 选择结果：${DNS_SERVERS}"
 
   mkdir -p "$CLIENT_PATH"
 
@@ -384,14 +590,14 @@ add_client() {
 [Interface]
 Address = ${CLIENT_IP}/24
 PrivateKey = ${CLIENT_PRIV}
-DNS = 1.1.1.1
-MTU = 1280
+DNS = ${DNS_SERVERS}
+MTU = ${WG_MTU}
 
 [Peer]
 PublicKey = ${SERVER_PUB}
 Endpoint = ${SERVER_PUBLIC_IP}:${WG_PORT}
-# 超级节点模式：全流量走服务器 + 客户端互通
-AllowedIPs = 0.0.0.0/0, 10.10.10.0/24
+# 路由模式：${ALLOWED_IPS}
+AllowedIPs = ${ALLOWED_IPS}
 PersistentKeepalive = 25
 EOF
 
@@ -407,12 +613,20 @@ EOF
   echo " 客户端 IP  : ${CLIENT_IP}"
   echo " 配置文件   : ${CLIENT_PATH}/client.conf"
   echo " 公钥       : ${CLIENT_PUB}"
+  echo " MTU        : ${WG_MTU}"
+  echo " AllowedIPs : ${ALLOWED_IPS}"
+  echo " DNS        : ${DNS_SERVERS}"
   echo "-----------------------------------------"
   echo ">> 在客户端：将 client.conf 复制到 /etc/wireguard/wg0.conf 即可使用"
+  echo ">> 建议在客户端实际用 ping 再测一遍 MTU，如有更优值可回到此菜单重新建一个客户端。"
 
   # 终端二维码
   info "生成配置二维码（终端扫码导入）..."
-  qrencode -t ansiutf8 < "${CLIENT_PATH}/client.conf" || warn "二维码生成失败（qrencode 异常）。"
+  if command -v qrencode >/dev/null 2>&1; then
+    qrencode -t ansiutf8 < "${CLIENT_PATH}/client.conf" || warn "二维码生成失败（qrencode 异常）。"
+  else
+    warn "未安装 qrencode，跳过二维码生成。"
+  fi
 }
 
 # -------------------- 删除客户端 --------------------
@@ -451,9 +665,9 @@ list_clients() {
 
   echo "当前已配置客户端："
   echo "-----------------------------------------"
+  local d NAME IP
   for d in "${WG_CLIENT_DIR}"/*; do
     [[ -d "$d" ]] || continue
-    local NAME IP
     NAME=$(basename "$d")
     IP=$(grep -m1 "^Address" "$d/client.conf" 2>/dev/null | awk '{print $3}')
     echo " - ${NAME} : ${IP}"
@@ -467,10 +681,16 @@ show_server_info() {
     error "服务端尚未初始化。"
     return
   fi
-  local SERVER_PUB WG_PORT
+  local SERVER_PUB WG_PORT DNS_BEST
   SERVER_PUB=$(cat "${WG_DIR}/server_public.key")
   WG_PORT=$(detect_wg_port)
   [[ -z "$WG_PORT" ]] && WG_PORT="未知"
+
+  if [[ -f "$WG_DNS_FILE" ]]; then
+    DNS_BEST=$(cat "$WG_DNS_FILE" 2>/dev/null || true)
+  else
+    DNS_BEST="未缓存（创建客户端时自动探测）"
+  fi
 
   echo "-----------------------------------------"
   echo " 服务端公网 IP : ${SERVER_PUBLIC_IP}"
@@ -479,6 +699,7 @@ show_server_info() {
   echo " 公钥          : ${SERVER_PUB}"
   echo " 配置文件      : ${WG_DIR}/${WG_IF}.conf"
   echo " 客户端目录    : ${WG_CLIENT_DIR}"
+  echo " 智能 DNS 缓存 : ${DNS_BEST}"
   echo "-----------------------------------------"
   wg show "${WG_IF}" || true
 }
@@ -491,8 +712,11 @@ export_clients() {
   fi
   local backup="/etc/wireguard/clients_backup_$(date +%F_%H%M%S).zip"
   info "打包客户端配置到：${backup}"
-  zip -r "$backup" "$WG_CLIENT_DIR" >/dev/null 2>&1 || { error "打包失败。"; return; }
-  success "导出成功：${backup}"
+  if zip -r "$backup" "$WG_CLIENT_DIR" >/dev/null 2>&1; then
+    success "导出成功：${backup}"
+  else
+    error "打包失败。"
+  fi
 }
 
 # -------------------- 重置服务端密钥（保留客户端） --------------------
@@ -522,6 +746,7 @@ reset_server_keys() {
   mv "${WG_DIR}/server_public.key.new" "${WG_DIR}/server_public.key"
 
   info "更新所有客户端配置中的服务端公钥..."
+  local d
   for d in "${WG_CLIENT_DIR}"/*; do
     [[ -d "$d" ]] || continue
     sed -i "s|^PublicKey *=.*|PublicKey = ${NEW_PUB}|" "$d/client.conf"
