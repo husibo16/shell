@@ -154,6 +154,10 @@ detect_optimal_mtu() {
 get_or_detect_mtu() {
   local mtu
   mtu=$(detect_optimal_mtu)
+    if [[ -z "${mtu:-}" || ! "${mtu}" =~ ^[0-9]+$ ]]; then
+    mtu=1280
+  fi
+
   echo "$mtu" > "$WG_MTU_FILE"
   echo "$mtu"
 }
@@ -295,14 +299,7 @@ EOF
 configure_nftables() {
   info "配置 nftables 防火墙..."
 
-  # 备份原有配置，避免覆盖生产环境已有的防火墙规则
-  if [[ -f /etc/nftables.conf ]]; then
-    local backup="/etc/nftables.conf.bak-$(date +%F-%H%M%S)"
-    cp /etc/nftables.conf "$backup"
-    info "已备份现有 nftables 配置到：${backup}"
-  fi
-
-  local WAN_IF WG_PORT
+  local WAN_IF WG_PORT MAIN_CONF INCLUDE_DIR WG_RULES
   WAN_IF=$(detect_wan_if)
   if [[ -z "$WAN_IF" ]]; then
     warn "未能检测到默认出口网卡，使用 eth0 作为默认出口。"
@@ -313,10 +310,41 @@ configure_nftables() {
     WG_PORT=$(get_or_create_port)
   fi
 
-  cat > /etc/nftables.conf <<EOF
+  MAIN_CONF="/etc/nftables.conf"
+  INCLUDE_DIR="/etc/nftables.d"
+  WG_RULES="${INCLUDE_DIR}/wireguard.nft"
+  mkdir -p "$INCLUDE_DIR"
+
+  # 备份原有配置，避免覆盖生产环境已有的防火墙规则
+  if [[ -f "$MAIN_CONF" ]]; then
+    local backup="${MAIN_CONF}.bak-$(date +%F-%H%M%S)"
+    cp "$MAIN_CONF" "$backup"
+    info "已备份现有 nftables 配置到：${backup}"
+  fi
+  if [[ -f "$WG_RULES" ]]; then
+    local backup_wg="${WG_RULES}.bak-$(date +%F-%H%M%S)"
+    cp "$WG_RULES" "$backup_wg"
+    info "已备份现有 WireGuard nftables 规则到：${backup_wg}"
+  fi
+
+  if [[ ( -f "$MAIN_CONF" && -s "$MAIN_CONF" ) || ( -f "$WG_RULES" && -s "$WG_RULES" ) ]] && [[ -z "${WG_FORCE_NFTABLES:-}" ]]; then
+    warn "检测到已有 nftables 配置，以下规则将覆盖原有规则（默认阻断除 SSH/WireGuard 外的端口）。"
+    read -rp "继续覆盖并应用新的 nftables 规则？(yes/no，默认 no): " ans
+    if [[ "${ans:-no}" != "yes" ]]; then
+      warn "已跳过 nftables 配置。请确保现有防火墙已放行 SSH(22) 与 UDP ${WG_PORT}。"
+      return
+    fi
+  fi
+
+  cat > "$MAIN_CONF" <<'EOF'
+#!/usr/sbin/nft -f  
 flush ruleset
 
-table inet filter {
+include "/etc/nftables.d/*.nft"
+EOF
+
+  cat > "$WG_RULES" <<EOF
+ table inet filter {
   chain input {
     type filter hook input priority 0;
     policy drop;
@@ -458,9 +486,9 @@ init_server() {
 
   local WG_PORT WG_MTU
   WG_PORT=$(get_or_create_port)
-  WG_MTU=1280
+  WG_MTU=$(get_or_detect_mtu)
   success "WireGuard 监听端口：${WG_PORT}/udp"
-  success "服务端 MTU 固定为：${WG_MTU}"
+  success "服务端 MTU 探测值：${WG_MTU}（客户端可自定义覆盖）"
 
   info "写入 ${WG_DIR}/${WG_IF}.conf ..."
   cat > "${WG_DIR}/${WG_IF}.conf" <<EOF
