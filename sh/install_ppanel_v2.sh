@@ -168,9 +168,9 @@ if [ ! -d "$NODE_BASE_DIR" ]; then
   die "未找到 $NODE_BASE_DIR 目录，请先在宝塔面板安装 Node.js 管理器"
 fi
 
-# 找到最新版本的 Node 目录
-NODE_PATH=$(find "$NODE_BASE_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -V | tail -n 1)
-[ -z "$NODE_PATH" ] && die "未在 $NODE_BASE_DIR 找到 Node 版本目录"
+# 找到最新版本的 Node 目录（只匹配 v 开头的版本目录，如 v20.10.0）
+NODE_PATH=$(ls -d "$NODE_BASE_DIR"/v[0-9]* 2>/dev/null | sort -V | tail -n 1)
+[ -z "$NODE_PATH" ] && die "未在 $NODE_BASE_DIR 找到 Node 版本目录（应为 v20.x.x 格式）"
 
 NODE_BIN="$NODE_PATH/bin/node"
 NPM_BIN="$NODE_PATH/bin/npm"
@@ -294,7 +294,7 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: "1G",
+      max_memory_restart: "500M",
       min_uptime: "10s",
       max_restarts: 10,
       restart_delay: 4000,
@@ -341,7 +341,7 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: "2G",
+      max_memory_restart: "1G",
       min_uptime: "10s",
       max_restarts: 10,
       restart_delay: 4000,
